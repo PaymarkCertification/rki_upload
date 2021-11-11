@@ -1,7 +1,7 @@
 from atlassian import ServiceDesk
 from Util.logUtil import Logs
+from pathlib import Path
 from enum import Enum
-import urllib
 import requests
 import base64
 import json
@@ -23,15 +23,18 @@ class JiraServiceDesk(ServiceDesk):
                 username: str, 
                 password: str, 
                 proxy_user: str=None, 
-                proxy_password: str=None):
-        
+                proxy_password: str=None,
+                DC: str = 'dc4'):
+
+        self.DC = DC
         self.server = server
         self.username = username
         self.token = password
         self.log = Logs(__class__.__name__).logger()
+
         if proxy_user and proxy_password:
             self.log.info('Updating proxy configuration')
-            self.update_proxy(proxy_user, proxy_password)
+            self.update_proxy(proxy_user, proxy_password, DC)
             
         if username and password:
             self.log.info('Updating Auth Header')
@@ -43,17 +46,24 @@ class JiraServiceDesk(ServiceDesk):
                         cloud=True, 
                         proxies=self.proxy)
         
-    def update_proxy(self, user: str, password: str, dc: str ='dc4',port=80) -> None:
+    def update_proxy(self, user: str, password: str, dc: str, port: int=80) -> None:
+        """Configures Proxy address
+            @param: user: AD Login
+            @param: password: AD Password
+            @param: DC: DataCentre
+            @param: Port: Default 80
+        """
         self.proxy.update({'https':f'http://{user}:{password}@proxy_{dc}.internal.etsl.co.nz:{port}',
                             'http':f'http://{user}:{password}@proxy_{dc}.internal.etsl.co.nz:{port}'})
 
     @staticmethod
     def base64_conv(username: str, password: str) -> str:
+        """Converts b' object or ASCII string. Returns decoded contents"""
         var = "{}:{}".format(username, password).encode('ascii')
         b64string = base64.b64encode(var).decode('ascii')
         return b64string
 
-    def transition_issue(self, issueIdOrKey, transitionId):
+    def transition_issue(self, issueIdOrKey: str, transitionId: int) -> requests:
         url = f'/rest/api/3/issue/{issueIdOrKey}/transitions?expand=transitions.fields'
         headers = self.headers.copy()
         headers.update({"Content-Type":"application/json"})
@@ -62,7 +72,7 @@ class JiraServiceDesk(ServiceDesk):
                             "id": transitionId}
                             })
         try:
-            self.log.info('Transitioning issue')
+            self.log.info(f'Transitioning issue {issueIdOrKey}')
             response = requests.request("POST", self.url + url, headers=headers, proxies=self.proxy, data=payload)
             return response
         except:
@@ -71,11 +81,15 @@ class JiraServiceDesk(ServiceDesk):
         
 
     def get_transition_jira(self, issueIdOrKey) -> json:
+        """returns all available transitions for issue"""
         url = f'/rest/api/3/issue/{issueIdOrKey}/transitions'
         response = requests.request("GET", self.server + url, headers=self.headers, proxies=self.proxy)
         return response.json()['transitions']
 
     def get_attachment(self, issueIdOrKey: str) -> None:
+        """gets all attachments for issue.
+    
+        """
         url = f'/rest/servicedeskapi/request/{issueIdOrKey}/attachment'
         response = requests.request("GET", self.server + url, headers=self.headers, proxies=self.proxy)
         if response.json()['values']:
@@ -92,17 +106,26 @@ class JiraServiceDesk(ServiceDesk):
 
     def download_file(self, filename: str, contents: str) -> None:
         response = requests.get(contents, headers=self.headers, proxies=self.proxy)
-        with open(filename, 'wb') as fp:
-            fp.write(response.content)
-            self.log.info(f'Successfully downloaded: {filename}')
+        # with open(filename, 'wb') as fp: # downloads to cwd
+        try:
+            with open(os.getcwd()+'/temp/{}'.format(filename), 'wb') as fp: # downloads to Temp folder
+                fp.write(response.content)
+                self.log.info(f'Successfully downloaded: {filename}')
+        except Exception as e:
+            self.log.info("Error: {}. Unable to save {} file in directory".format(e, filename))
 
     def delete_temp_files(self) -> None:
-        extension = glob.glob("*.dat")
-        if len(extension) >= 1:
-            self.log.info("Deleting {} file(s)".format(len(extension)))
-            for enum, item in enumerate(extension, 1):
+        # extension = glob.glob(f"*{fext}")
+        folder = glob.glob(os.getcwd()+'/Temp/*')
+        # if len(extension) >= 1:
+        if len(folder) >=1:
+            self.log.info("Deleting {} file(s)".format(len(folder)))
+            for enum, item in enumerate(folder, 1):
                 self.log.info('{}. Deleted {}'.format(enum, item))
-                os.remove(item)
+                if os.path.isfile(item):
+                    os.remove(item)
+                else:
+                    self.log.info("Error: {} file not found".format(item))
         else:
             self.log.info("No files to delete.")  
 
@@ -110,15 +133,23 @@ class JiraServiceDesk(ServiceDesk):
     def issueCount(self) -> int:
         pass
 
-    def get_keys(self, service_desk_id: int, queue_id: int) ->list[int]:
+    def get_keys(self, service_desk_id: int, queue_id: int) -> list[int]:
         issues = self.get_issues_in_queue(queue_id=queue_id, service_desk_id=service_desk_id)
         key = [issue['key'] for issue in issues['values']]
         return key
+    
+    def get_request_comment(self, issueIdOrKey: str):
+        url = f"rest/servicedeskapi/request/{issueIdOrKey}/comment"
+        response = requests.request("GET", self.server + url, headers=self.headers, proxies=self.proxy)
+        return response
+
+    
 
 class Transition(Enum):
-    issueRaiseInError = "101"
-    issueResolved = "71"
-    pending = "41"
-    startProgress = "11"
-    backToOpen=  "51"
+    """Enum class for JSD transition IDs"""
+    issueRaiseInError: str = "101"
+    issueResolved: str = "71"
+    pending: str = "41"
+    startProgress: str = "11"
+    backToOpen: str =  "51"
 

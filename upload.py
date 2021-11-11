@@ -1,5 +1,6 @@
 from selenium import webdriver
 import time
+import sys
 import os
 import glob
 from Util.logUtil import Logs
@@ -7,7 +8,7 @@ from Util.jiraUtil import JiraServiceDesk, Transition
 from configparser import ConfigParser
 from selenium.webdriver.support.ui import WebDriverWait
 
-
+__version__ = 0.3
 # ============================================
 # Script configuration data
 conf = ConfigParser()
@@ -21,6 +22,7 @@ PUSER = conf.get("proxy", "username")
 PPASSWORD = conf.get("proxy", "password")
 RKIADDRESS = conf.get("rki", "address")
 SERVICEID = int(conf.get("jira","sd_id"))
+DC = conf.get("proxy", "dc")
 
 
 # ============================================
@@ -35,36 +37,44 @@ WAIT_TIME = 30 # timeout
 
 # ============================================
 #containers
-Y = []
-N = []
+SUCCESSFUL = []
+UNSUCCESSFUL = []
+MANUAL_ACTION = []
 
 # ============================================
 # initialize objects
-log = Logs("UploadScript").logger()
-sd = JiraServiceDesk(SERVER, USERNAME, PASSWORD, proxy_user=PUSER, proxy_password=PPASSWORD)
+log = Logs(__name__).logger()
+sd = JiraServiceDesk(SERVER, USERNAME, PASSWORD, proxy_user=PUSER, proxy_password=PPASSWORD, DC=DC)
 driver = webdriver.Chrome(options=options)
 wait = WebDriverWait(driver, WAIT_TIME)
 
 # ============================================
 # script functions
 def import_result(ticket: str, pedFile: str) -> str:
-    driver.find_element_by_xpath('//*[@id="PEDFile"]').send_keys(os.getcwd()+f"\{pedFile}")
-    log.info(f"Uploading file: {pedFile}")
-
-    driver.find_element_by_xpath("/html/body/div/div[2]/form/input[2]").click()
-    log.info('Select Element: //*[@id="btnCopy"]')
+    """
+    Desc: Import PED Files to RKI Server
+    @param: ticket: Jira ticket
+    @param: pedFile: Absolute path for attachment
     
-    log.info("Init Sleep. 5 Seconds.")
-    time.sleep(5) # assumes each file takes less than 5 seconds to upload.
-    driver.find_element_by_xpath('//*[@id="btnCopy"]').click()
-    # cpy = Tk().clipboard_get()
+    """
+    basename = os.path.basename(pedFile) # filename without path
+    driver.find_element_by_xpath('//*[@id="PEDFile"]').send_keys(f"{pedFile}")
+    log.info(f"Uploading file: {basename}")
+
+    log.info('Select Element: Upload PED File')
+    driver.find_element_by_xpath("/html/body/div/div[2]/form/input[2]").click() #upload button
+
+    log.info("Waiting for upload to complete")
+    wait.until(lambda driver: basename in driver.find_element_by_xpath('//*[@id="MessageHidden"]').get_attribute('value'))
     text = driver.find_element_by_xpath('//*[@id="MessageHidden"]').get_attribute('value')
     log.info("Getting Element Attribute: '{}'".format(text))
-    if pedFile in text:
+
+    if basename in text:
         if "Successful" in text:
-            Y.append(f'{ticket}: {pedFile}')
+            SUCCESSFUL.append(f'{ticket}: {basename}')
         else: 
-            N.append(f'{ticket}: {pedFile}')
+            UNSUCCESSFUL.append(f'{ticket}: {basename}')
+            MANUAL_ACTION.append(ticket)
         return text
         
     else:
@@ -75,23 +85,34 @@ def import_result(ticket: str, pedFile: str) -> str:
 def stats(verbose: int=0) -> None:
     header = "\n>>>>>>>>>>>>-----Results-----<<<<<<<<<<<<\n" 
     footer = "\n>>>>>>>>>>>>-----------------<<<<<<<<<<<<"
-    total = len(Y)+len(N)
-    percent = int(len(Y)/(len(Y)+len(N)) * 100)
-    print(
-        f"{header}"
-        f"\nFiles Parsed: {total}\n"
-        f"Success Rate: {percent}\n"
-        f"{footer}"
+    # print("Tickets Requiring Manual Action:",MANUAL_ACTION)
+    try:
+        total = len(SUCCESSFUL)+len(UNSUCCESSFUL) if not len(SUCCESSFUL) < 1 else None
+        percent = int(len(SUCCESSFUL)/(len(SUCCESSFUL)+len(UNSUCCESSFUL)) * 100) if not len(SUCCESSFUL) < 1 else ''
+        print(
+    f"{header}"
+    f"\nFiles Parsed: {total}\n"
+    f"Success Rate: {percent}\n"
+    f"{footer}"
         if not verbose else 
-        f"{header}"
-        f"\nFiles Parsed: {total}\n"
-        f"Success Rate: {percent}%\n"
-        f"Successful: {Y}\n"
-        f"Unsuccessful: {N}\n"
-        f"{footer}"
-    )
+    f"{header}"
+    f"\nFiles Parsed: {total}\n"
+    f"Success Rate: {percent} %\n"
+    f"Successful: {SUCCESSFUL}\n"
+    f"Unsuccessful: {UNSUCCESSFUL}\n"
+    f"Tickets Requiring Manual Action: {','.join(str(x) for x in set(MANUAL_ACTION))}\n"
+    f"{footer}"
+)
+    except ZeroDivisionError as z:
+        log.info(f"stats() function error: {z}")    
+
 
 def screenshot(filename: str=None) -> None:
+    '''
+    Desc: Saves screenshot - Debugging feature for headless mode.
+    @param: filename: image name
+    
+    '''
     from datetime import datetime
     log.info('Saving Screenshot')
     if not filename:
@@ -101,6 +122,7 @@ def screenshot(filename: str=None) -> None:
         return driver.save_screenshot(filename)
 
 def check2FA()-> None:
+    '''Desc: Two Factor Authentication Flow.'''
     log.info("Checking 2FA is presented")
     try:
         wait.until(lambda driver: driver.current_url != RKIADDRESS)
@@ -130,27 +152,72 @@ def check2FA()-> None:
         wait.until(lambda driver: driver.current_url == RKIADDRESS)
         log.info("Directed to import page.")
 
+def get_folder(path: str) -> str:
+    '''@param: path: filename
+       @return: Folder path 
+        '''
+    try:
+        folder = glob.glob(os.getcwd()+f'{path}*')
+    except:
+        print("Exception occurred")
+    return folder
+
+def check_status(ticket: str, status='open') -> bool:
+    ''' @param: ticket: jira ticket
+        @param: status: jira status for comparison
+        @return: bool 
+    '''
+    try:
+        ticket_status = sd.get_customer_request_status(ticket)
+        if ticket_status.lower() != status.lower():
+            return False
+        else:
+            return True 
+    except:
+        log.critical(f"Exception Occured with check_status()")
+
+def status(ticket):
+    """
+       Desc: Checks ticket status. Proceeds depending on status. 
+        -WIP - No Action taken by script
+        -Open - Transition ticket to WIP, download attachment, upload items to RKI Server.
+        **If any file fails in upload then ticket remains in WIP status. Otherwise transition ticket to resolve.
+        @param: ticket: Jira Ticket
+    """
+    if check_status(ticket, status='work in progress'):
+        MANUAL_ACTION.append(ticket)
+
+    elif check_status(ticket):
+                sd.transition_issue(ticket, Transition.startProgress.value) 
+                sd.get_attachment(ticket)
+                for pedFile in get_folder("/Temp/"):
+                    sd.create_request_comment(ticket, import_result(ticket, pedFile), public=PUBLIC) # public toggle [Internal/External Comment]
     
+    elif any(ticket in j for j in UNSUCCESSFUL):
+        MANUAL_ACTION.append(ticket)
+    
+    if not any(ticket in i for i in MANUAL_ACTION):
+        sd.transition_issue(ticket, Transition.issueResolved.value)
 # ============================================
 # Begin
 if __name__=='__main__':
 
     tickets = sd.get_keys(SERVICEID, QUEUEID)
     log.info("Ticket(s) in queue: {}\n{}".format(len(tickets), tickets))
-    log.info("Init Chrome Browser")
-    driver.get(RKIADDRESS)
-    check2FA()
-    
     if len(tickets) >=1:
+        log.info("Init Chrome Browser")
+        driver.get(RKIADDRESS)
+        check2FA()
         for ticket in tickets:
-            sd.get_attachment(ticket)
-            for f in glob.glob('*.dat'):
-                sd.transition_issue(ticket, Transition.startProgress.value)
-                sd.create_request_comment(ticket, import_result(ticket,f), public=PUBLIC) # public toggle [Internal/External Comment]
-                sd.transition_issue(ticket, Transition.issueResolved.value)
+            status(ticket)
             sd.delete_temp_files()
         driver.quit()
+        
         stats(verbose=1)
-    else:
-        log.info("No issues found")
+        os.system("pause")
         quit()
+        
+    else:
+        log.info("No issues found. Stopping Execution")
+        os.system("pause")
+        sys.exit()
