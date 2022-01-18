@@ -193,10 +193,10 @@ def status(ticket):
         MANUAL_ACTION.append(ticket)
 
     elif check_status(ticket):
-                sd.transition_issue(ticket, Transition.startProgress.value) 
-                sd.get_attachment(ticket)
-                for pedFile in get_folder("/Temp/"):
-                    sd.create_request_comment(ticket, import_result(ticket, pedFile), public=PUBLIC) # public toggle [Internal/External Comment]
+        sd.transition_issue(ticket, Transition.startProgress.value) 
+        sd.get_attachment(ticket)
+        for pedFile in get_folder("/Temp/"):
+            sd.create_request_comment(ticket, import_result(ticket, pedFile), public=PUBLIC) # public toggle [Internal/External Comment]
     
     elif any(ticket in j for j in UNSUCCESSFUL):
         MANUAL_ACTION.append(ticket)
