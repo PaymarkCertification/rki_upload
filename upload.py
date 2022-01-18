@@ -167,7 +167,7 @@ def get_folder(path: str) -> str:
         print("Exception occurred")
     return folder
 
-def is_check_status(ticket: str, status='open') -> bool:
+def check_status(ticket: str, status='open') -> bool:
     ''' @param: ticket: jira ticket
         @param: status: jira status for comparison
         @return: bool 
@@ -179,7 +179,7 @@ def is_check_status(ticket: str, status='open') -> bool:
         else:
             return True 
     except:
-        log.critical(f"Exception Occured with is_check_status()")
+        log.critical(f"Exception Occured with check_status()")
 
 def status(ticket):
     """
@@ -189,10 +189,10 @@ def status(ticket):
         **If any file fails in upload then ticket remains in WIP status. Otherwise transition ticket to resolve.
         @param: ticket: Jira Ticket
     """
-    if is_check_status(ticket, status='work in progress'):
+    if check_status(ticket, status='work in progress'):
         MANUAL_ACTION.append(ticket)
 
-    elif is_check_status(ticket):
+    elif check_status(ticket):
                 sd.transition_issue(ticket, Transition.startProgress.value) 
                 sd.get_attachment(ticket)
                 for pedFile in get_folder("/Temp/"):
@@ -211,12 +211,12 @@ def get_tickets(serviceId, queueId):
     except ProxyError:
         log.error("Cannot connect to proxy: <%s>. Check windows login details or proxy address" %(DC))
         sys_clean_up()
+        
     except HTTPError:
         log.error("Unauthorized access for url <%s>. Check Jira login details or API address"%(SERVER))
         sys_clean_up()
 
 def sys_clean_up():
-        "Clean up function."
         os.system("pause")
         sys.exit()
 # ============================================
