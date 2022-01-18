@@ -211,12 +211,12 @@ def get_tickets(serviceId, queueId):
     except ProxyError:
         log.error("Cannot connect to proxy: <%s>. Check windows login details or proxy address" %(DC))
         sys_clean_up()
-        
     except HTTPError:
         log.error("Unauthorized access for url <%s>. Check Jira login details or API address"%(SERVER))
         sys_clean_up()
 
 def sys_clean_up():
+        "Clean up function."
         os.system("pause")
         sys.exit()
 # ============================================
