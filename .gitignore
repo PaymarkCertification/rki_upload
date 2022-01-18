@@ -1,0 +1,16 @@
+/venv
+/dist
+/Temp
+/build
+/.pytest_cache
+/.idea
+/__pycache__
+.ini
+**/venv
+**/dist
+**/Temp
+**/build
+**/.pytest_cache
+**/.idea
+**/__pycache__
+.spec
